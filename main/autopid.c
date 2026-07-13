@@ -207,6 +207,41 @@ static cJSON *json_object_diff_simple(const cJSON *curr_obj, const cJSON *prev_o
     return diff;
 }
 
+// Adds one {class, unit} object per enabled parameter to target, keyed by
+// parameter name. Caller must hold all_pids->mutex. Shared by
+// autopid_get_config() (local API) and autopid_build_config_object() (webhook
+// payload) so the two stay in sync.
+static void autopid_add_params_meta(cJSON *target)
+{
+    for (uint32_t i = 0; i < all_pids->pid_count; i++)
+    {
+        pid_data2_t *curr_pid = &all_pids->pids[i];
+
+        if ((curr_pid->pid_type == PID_STD && !all_pids->pid_std_en) ||
+            (curr_pid->pid_type == PID_CUSTOM && !all_pids->pid_custom_en) ||
+            (curr_pid->pid_type == PID_SPECIFIC && !all_pids->pid_specific_en))
+        {
+            continue;
+        }
+
+        for (uint32_t j = 0; j < curr_pid->parameters_count; j++)
+        {
+            parameter_t *param = &curr_pid->parameters[j];
+            if (!param || !param->name)
+                continue;
+
+            cJSON *meta = cJSON_CreateObject();
+            if (!meta)
+                continue;
+            if (param->class)
+                cJSON_AddStringToObject(meta, "class", param->class);
+            if (param->unit)
+                cJSON_AddStringToObject(meta, "unit", param->unit);
+            cJSON_AddItemToObject(target, param->name, meta);
+        }
+    }
+}
+
 static cJSON *autopid_build_config_object(void)
 {
     cJSON *cfg = cJSON_CreateObject();
@@ -225,6 +260,35 @@ static cJSON *autopid_build_config_object(void)
         cJSON_AddStringToObject(cfg, "ha_discovery", all_pids->ha_discovery_en ? "enable" : "disable");
         if (all_pids->autopid_polling)
             cJSON_AddStringToObject(cfg, "autopid_polling", all_pids->autopid_polling);
+
+        // Per-parameter metadata (class/unit) keyed by parameter name, so HA can
+        // assign the right device_class/unit instead of guessing by name. This
+        // is the object that actually gets posted to the HA webhook.
+        if (xSemaphoreTake(all_pids->mutex, portMAX_DELAY) == pdTRUE)
+        {
+            autopid_add_params_meta(cfg);
+            xSemaphoreGive(all_pids->mutex);
+        }
+    }
+
+    // Broadcast CAN filter metadata (class/unit), independent of all_pids.
+    uint32_t canflt_count = mqtt_canflt_get_count();
+    for (uint32_t i = 0; i < canflt_count; i++)
+    {
+        mqtt_canflt_entry_t entry;
+        if (!mqtt_canflt_get_entry(i, &entry) || !entry.name[0])
+            continue;
+        if (!entry.class_name[0] && !entry.unit[0])
+            continue;
+
+        cJSON *meta = cJSON_CreateObject();
+        if (!meta)
+            continue;
+        if (entry.class_name[0])
+            cJSON_AddStringToObject(meta, "class", entry.class_name);
+        if (entry.unit[0])
+            cJSON_AddStringToObject(meta, "unit", entry.unit);
+        cJSON_AddItemToObject(cfg, entry.name, meta);
     }
 
     return cfg;
@@ -927,9 +991,12 @@ char *autopid_data_read(void)
 {
     static char *json_str = NULL;
     
-    if (!autopid_values || !autopid_values_mutex) {
-        ESP_LOGE(TAG, "Invalid autopid_values or mutex");
-        DEBUG_LOGE(TAG, "Invalid autopid_values or mutex");
+    // Note: autopid_values itself may be NULL/empty on a device with no active
+    // PIDs configured at all (pid_count == 0). That's not fatal, since
+    // broadcast CAN filter values below don't depend on it.
+    if (!autopid_values_mutex) {
+        ESP_LOGE(TAG, "Invalid autopid_values mutex");
+        DEBUG_LOGE(TAG, "Invalid autopid_values mutex");
         return NULL;
     }
 
@@ -946,16 +1013,29 @@ char *autopid_data_read(void)
     if (xSemaphoreTake(autopid_values_mutex, portMAX_DELAY) == pdTRUE) {
         cJSON *root = cJSON_CreateObject();
         if (root) {
-            for (uint32_t i = 0; i < autopid_values_count; i++) {
-                autopid_value_t *value = &autopid_values[i];
-                if (value->name && value->value != FLT_MAX) {
-                    if (value->sensor_type == BINARY_SENSOR) {
-                        cJSON_AddStringToObject(root, value->name, value->value > 0 ? "on" : "off");
-                    } else {
-                        cJSON_AddNumberToObject(root, value->name, value->value);
+            if (autopid_values) {
+                for (uint32_t i = 0; i < autopid_values_count; i++) {
+                    autopid_value_t *value = &autopid_values[i];
+                    if (value->name && value->value != FLT_MAX) {
+                        if (value->sensor_type == BINARY_SENSOR) {
+                            cJSON_AddStringToObject(root, value->name, value->value > 0 ? "on" : "off");
+                        } else {
+                            cJSON_AddNumberToObject(root, value->name, value->value);
+                        }
                     }
                 }
             }
+
+            // Broadcast CAN filter values ("CAN to JSON interpreter") - computed
+            // directly off the CAN bus independent of active PID polling.
+            uint32_t canflt_count = mqtt_canflt_get_count();
+            for (uint32_t i = 0; i < canflt_count; i++) {
+                mqtt_canflt_entry_t entry;
+                if (mqtt_canflt_get_entry(i, &entry) && entry.has_value && entry.name[0]) {
+                    cJSON_AddNumberToObject(root, entry.name, entry.value);
+                }
+            }
+
             limitJsonDecimalPrecision(root);
             json_str = cJSON_PrintUnformatted(root);
             cJSON_Delete(root);
@@ -1052,44 +1132,7 @@ char* autopid_get_config(void)
         return NULL;
     }
 
-    // Iterate through all PIDs
-    for (int i = 0; i < all_pids->pid_count; i++)
-    {
-        // For each PID, iterate through its parameters
-        for (int j = 0; j < all_pids->pids[i].parameters_count; j++)
-        {
-            parameter_t *param = &all_pids->pids[i].parameters[j];
-            
-            if((all_pids->pids[i].pid_type == PID_STD && !all_pids->pid_std_en) ||
-            (all_pids->pids[i].pid_type == PID_CUSTOM && !all_pids->pid_custom_en) ||
-            (all_pids->pids[i].pid_type == PID_SPECIFIC && !all_pids->pid_specific_en))
-            {
-                continue;
-            }
-            // Skip if parameter name is NULL
-            if (!param || !param->name) continue;
-            
-            cJSON *parameter_details = cJSON_CreateObject();
-            if (!parameter_details)
-            {
-                ESP_LOGE(TAG, "Failed to create parameter JSON object");
-                DEBUG_LOGE(TAG, "Failed to create parameter JSON object");
-                continue;
-            }
-            
-            // Add class and unit if they exist
-            if (param->class)
-            {
-                cJSON_AddStringToObject(parameter_details, "class", param->class);
-            }
-            if (param->unit)
-            {
-                cJSON_AddStringToObject(parameter_details, "unit", param->unit);
-            }
-            
-            cJSON_AddItemToObject(parameters_object, param->name, parameter_details);
-        }
-    }
+    autopid_add_params_meta(parameters_object);
 
     // Convert to string and send response
     response_str = cJSON_PrintUnformatted(parameters_object);

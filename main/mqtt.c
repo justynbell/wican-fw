@@ -97,6 +97,10 @@ typedef struct
     char expression[32];
     uint32_t cycle;
 	int64_t logtime;
+    char unit[16];
+    char class_name[24];
+    float value;
+    bool has_value;
 } CANFilter;
 
 static CANFilter *mqtt_canflt_values = NULL;
@@ -359,15 +363,22 @@ static void mqtt_task(void *pvParameters)
 		vTaskDelay(pdMS_TO_TICKS(1000));
 	}
 
-	esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
-	esp_mqtt_client_register_event(client, MQTT_EVENT_DATA, mqtt_parse_data, NULL);
-	esp_mqtt_client_start(client);
+	if(config_server_mqtt_en_config())
+	{
+		esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+		esp_mqtt_client_register_event(client, MQTT_EVENT_DATA, mqtt_parse_data, NULL);
+		esp_mqtt_client_start(client);
+	}
 
 	while(1)
 	{
 		xQueuePeek(*xmqtt_tx_queue, ( void * ) &tx_frame, portMAX_DELAY);
         dev_status_wait_for_bits(DEV_AWAKE_BIT, portMAX_DELAY);
-		if(mqtt_connected())
+		bool mqtt_up = mqtt_connected();
+		// Broadcast CAN filters must keep extracting/storing values even when there's
+		// no MQTT broker connected (or configured) - MQTT publish below just becomes
+		// one optional consumer of the computed value; the HA webhook is the other.
+		if(mqtt_up || (tx_frame.type == MQTT_CAN && mqtt_canflt_size != 0))
 		{
 			json_buffer[0] = 0;
             
@@ -422,9 +433,15 @@ static void mqtt_task(void *pvParameters)
                         {
                             ESP_LOGI(TAG, "Expression result: %lf", expression_result);
 
-                            sprintf(json_buffer, "{\"%s\": %lf}", mqtt_canflt_values[found_index].name, expression_result);
+                            mqtt_canflt_values[found_index].value = (float)expression_result;
+                            mqtt_canflt_values[found_index].has_value = true;
 
-                            mqtt_publish(mqtt_topic, json_buffer, 0, 0, 0);
+                            if(mqtt_up)
+                            {
+                                sprintf(json_buffer, "{\"%s\": %lf}", mqtt_canflt_values[found_index].name, expression_result);
+
+                                mqtt_publish(mqtt_topic, json_buffer, 0, 0, 0);
+                            }
                         }
                         else
                         {
@@ -434,7 +451,7 @@ static void mqtt_task(void *pvParameters)
                         start_index = found_index + 1;
                     }
                 }
-                else if(config_server_mqtt_rx_en_config())
+                else if(mqtt_up && config_server_mqtt_rx_en_config())
                 {
                     sprintf(json_buffer, "{\"bus\":\"0\",\"type\":\"rx\",\"ts\":%lu,\"frame\":[", (pdTICKS_TO_MS(xTaskGetTickCount())%60000));
 
@@ -547,6 +564,8 @@ static void mqtt_load_filter(void)
         cJSON *bit_length = cJSON_GetObjectItem(item, "BitLength");
         cJSON *expression = cJSON_GetObjectItem(item, "Expression");
         cJSON *cycle = cJSON_GetObjectItem(item, "Cycle");
+        cJSON *unit = cJSON_GetObjectItem(item, "Unit");
+        cJSON *class_item = cJSON_GetObjectItem(item, "Class");
 
         //if pidi is null set it to default 2
         if(pidi == NULL)
@@ -567,6 +586,21 @@ static void mqtt_load_filter(void)
             mqtt_canflt_values[i].cycle = (uint32_t)cycle->valuedouble;
             mqtt_canflt_values[i].logtime = 0;
 
+            // Optional metadata so downstream consumers (e.g. the HA webhook) can
+            // assign a proper unit/device_class instead of guessing by name.
+            mqtt_canflt_values[i].unit[0] = '\0';
+            if (cJSON_IsString(unit) && unit->valuestring)
+            {
+                strncpy(mqtt_canflt_values[i].unit, unit->valuestring, sizeof(mqtt_canflt_values[i].unit) - 1);
+            }
+            mqtt_canflt_values[i].class_name[0] = '\0';
+            if (cJSON_IsString(class_item) && class_item->valuestring)
+            {
+                strncpy(mqtt_canflt_values[i].class_name, class_item->valuestring, sizeof(mqtt_canflt_values[i].class_name) - 1);
+            }
+            mqtt_canflt_values[i].value = 0.0f;
+            mqtt_canflt_values[i].has_value = false;
+
             ESP_LOGI(TAG, "Loaded CAN Filter %lu: CAN ID=%lu, PID=%ld, PIDIndex=%ld, Name=%s, Start Bit=%lu, Bit Length=%lu, Expression=%s, Cycle=%lu",
                      i, mqtt_canflt_values[i].can_id, mqtt_canflt_values[i].pid, mqtt_canflt_values[i].pidi, mqtt_canflt_values[i].name,
                      mqtt_canflt_values[i].start_bit, mqtt_canflt_values[i].bit_length,
@@ -583,6 +617,55 @@ static void mqtt_load_filter(void)
     }
 
     cJSON_Delete(root);
+}
+
+bool mqtt_canflt_configured(void)
+{
+    // Lightweight peek at the stored filter config, usable before mqtt_init()/
+    // mqtt_load_filter() has run, so callers can decide whether to start the
+    // MQTT subsystem at all even when no broker is configured.
+    char *canflt_json = config_server_get_mqtt_canflt();
+    if (!canflt_json)
+    {
+        return false;
+    }
+
+    cJSON *root = cJSON_Parse(canflt_json);
+    if (!root)
+    {
+        return false;
+    }
+
+    cJSON *can_flt = cJSON_GetObjectItem(root, "can_flt");
+    bool has_entries = (can_flt != NULL) && cJSON_IsArray(can_flt) && (cJSON_GetArraySize(can_flt) > 0);
+    cJSON_Delete(root);
+    return has_entries;
+}
+
+bool mqtt_canflt_is_active(void)
+{
+    return mqtt_canflt_size > 0;
+}
+
+uint32_t mqtt_canflt_get_count(void)
+{
+    return mqtt_canflt_size;
+}
+
+bool mqtt_canflt_get_entry(uint32_t index, mqtt_canflt_entry_t *out)
+{
+    if (!out || !mqtt_canflt_values || index >= mqtt_canflt_size)
+    {
+        return false;
+    }
+
+    CANFilter *f = &mqtt_canflt_values[index];
+    strlcpy(out->name, f->name, sizeof(out->name));
+    strlcpy(out->unit, f->unit, sizeof(out->unit));
+    strlcpy(out->class_name, f->class_name, sizeof(out->class_name));
+    out->value = f->value;
+    out->has_value = f->has_value;
+    return true;
 }
 
 void mqtt_publish(char *topic, char *data, int len, int qos, int retain)

@@ -334,7 +334,7 @@ static void can_rx_task(void *pvParameters)
 					}
 				}
 			}
-			if(mqtt_connected())
+			if(mqtt_connected() || mqtt_canflt_is_active())
 			{
 				static mqtt_can_message_t mqtt_rx_msg;
 				if(mqtt_elm327_log_en == 0)
@@ -484,7 +484,10 @@ void app_main(void)
 		autopid_init((char*)&uid[0]);
 	}
 
-	if(config_server_mqtt_en_config())
+	// Broadcast CAN filters (CAN to JSON interpreter) need the MQTT subsystem's
+	// queue/task to run even when no MQTT broker is configured. mqtt_init()
+	// itself only actually connects to a broker when MQTT is enabled.
+	if(config_server_mqtt_en_config() || (protocol == AUTO_PID && mqtt_canflt_configured()))
 	{
 		can_set_bitrate(can_datarate);
 		xmsg_mqtt_rx_queue = xQueueCreate(32, sizeof(mqtt_can_message_t) );

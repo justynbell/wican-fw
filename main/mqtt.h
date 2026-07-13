@@ -21,6 +21,8 @@
 #ifndef MQTT_h
 #define MQTT_h
 
+#include <stdbool.h>
+#include <stdint.h>
 #include "driver/twai.h"
 #include "elm327.h"
 
@@ -34,7 +36,26 @@ typedef struct
     twai_message_t frame;
 }mqtt_can_message_t;
 
+// Snapshot of one broadcast CAN filter's latest computed value, for consumers
+// (e.g. the AutoPID webhook payload) other than the MQTT publish this feature
+// was originally built for.
+typedef struct
+{
+    char name[16];
+    char unit[16];
+    char class_name[24];
+    float value;
+    bool has_value;
+} mqtt_canflt_entry_t;
+
 void mqtt_init(char* id, uint8_t connected_led, QueueHandle_t *xtx_queue);
 int mqtt_connected(void);
 void mqtt_publish(char *topic, char *data, int len, int qos, int retain);
+
+// Broadcast CAN filter ("CAN to JSON interpreter") accessors. These work
+// independent of whether MQTT itself is enabled/connected.
+bool mqtt_canflt_configured(void);
+bool mqtt_canflt_is_active(void);
+uint32_t mqtt_canflt_get_count(void);
+bool mqtt_canflt_get_entry(uint32_t index, mqtt_canflt_entry_t *out);
 #endif
