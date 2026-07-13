@@ -475,8 +475,10 @@ static esp_err_t store_canflt_handler(httpd_req_t *req)
 		fseek(f1, 0, SEEK_SET);
 		ESP_LOGI(TAG, "mqtt_canfilt.json: %s", mqtt_canflt_file);
 	}
-    const char *resp_str = "CAN filter saved! Filter will take effect after submit.";
+    const char *resp_str = "CAN filter saved! Rebooting...";
     httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+
+    xTimerStart( xrestartTimer, 0 );
 
     return ESP_OK;
 }
