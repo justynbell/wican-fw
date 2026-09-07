@@ -1026,7 +1026,7 @@ char *autopid_data_read(void)
                 }
             }
 
-            // Broadcast CAN filter values ("CAN to JSON interpreter") - computed
+            // Broadcast CAN filter values ("CAN to JSON interpreter") computed
             // directly off the CAN bus independent of active PID polling.
             uint32_t canflt_count = mqtt_canflt_get_count();
             for (uint32_t i = 0; i < canflt_count; i++) {

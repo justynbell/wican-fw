@@ -803,35 +803,6 @@
                             <td>&nbsp;</td>
                         </tr>
                     </table>
-                    <div style="overflow-x:auto;">
-                        <div class="section-title">MQTT CAN Filter</div>
-                        <table id="can_flt_table" >
-                            <tr>
-                                <th style="text-align: left;">CAN ID (dec)</th>
-                                <th style="text-align: left;">Name</th>
-                                <th style="text-align: left;">PID</th>
-                                <th style="text-align: left;">Index</th>
-                                <th style="text-align: left;">Start Bit</th>
-                                <th style="text-align: left;">Bit Length</th>
-                                <th style="text-align: left;">Expression</th>
-                                <th style="text-align: left;">Cycle ms</th>
-                                <th><input id="store_canflt_button" name="store_canflt_button" type="button"
-                                        onclick="storeCANFLT()" value="Store" style="width: 100%;" /></th>
-                            </tr>
-                            <tr>
-                                <td style="width: 10%;" ><input type="number" id="canId" min="0" max="536870912" style="width: 80%;"/></td>
-                                <td style="width: 20%;"><input type="text" id="name" maxlength="16" style="width: 90%;"/></td>
-                                <td style="width: 10%;"><input type="number" id="pid"  style="width: 80%;"/></td>
-                                <td style="width: 10%;"><input type="number" id="pindex"  style="width: 80%;"/></td>
-                                <td style="width: 10%;"><input type="number" id="startBit" min="0" max="63"  style="width: 80%;"/></td>
-                                <td style="width: 10%;"><input type="number" id="bitLength" min="1" max="64" style="width: 80%;"/></td>
-                                <td style="width: 20%;"><input type="text" id="expression" maxlength="64"  style="width: 90%;"/></td>
-                                <td style="width: 10%;"><input type="number" id="cycle" min="100" max="1000"  style="width: 80%;"/></td>
-                                <td><input id="add_row_button" name="add_row_button" type="button" onclick="addCANFLTRow()"
-                                        value="Add ID" style="width: 100%;" /></td>
-                            </tr>
-                        </table>
-                    </div>
                 </div>
             </form>
         </div>
@@ -1035,6 +1006,59 @@
             <div class="button-group">
                 <button onclick="addRowAutoTable()" class="primary-button">New</button>
                 <button id="custom_pid_store" onclick="storeAutoTableData()" class="store" disabled>Store</button>
+            </div>
+
+            <div id="can_flt_div">
+                <div class="divider"></div>
+                <div style="overflow-x:auto;">
+                    <div class="section-title">Broadcast CAN Filter</div>
+                    <table id="can_flt_table" >
+                        <tr>
+                            <th style="text-align: left;">CAN ID (dec)</th>
+                            <th style="text-align: left;">Name</th>
+                            <th style="text-align: left;">PID</th>
+                            <th style="text-align: left;">Index</th>
+                            <th style="text-align: left;">Start Bit</th>
+                            <th style="text-align: left;">Bit Length</th>
+                            <th style="text-align: left;">Expression</th>
+                            <th style="text-align: left;">Cycle ms</th>
+                            <th style="text-align: left;">Unit</th>
+                            <th style="text-align: left;">Class</th>
+                            <th><input id="store_canflt_button" name="store_canflt_button" type="button"
+                                    onclick="storeCANFLT()" value="Store" style="width: 100%;" /></th>
+                        </tr>
+                        <tr>
+                            <td style="width: 10%;" ><input type="number" id="canId" min="0" max="536870912" style="width: 80%;"/></td>
+                            <td style="width: 20%;"><input type="text" id="name" maxlength="16" style="width: 90%;"/></td>
+                            <td style="width: 10%;"><input type="number" id="pid"  style="width: 80%;"/></td>
+                            <td style="width: 10%;"><input type="number" id="pindex"  style="width: 80%;"/></td>
+                            <td style="width: 10%;"><input type="number" id="startBit" min="0" max="63"  style="width: 80%;"/></td>
+                            <td style="width: 10%;"><input type="number" id="bitLength" min="1" max="64" style="width: 80%;"/></td>
+                            <td style="width: 20%;"><input type="text" id="expression" maxlength="64"  style="width: 90%;"/></td>
+                            <td style="width: 10%;"><input type="number" id="cycle" min="100" max="1000"  style="width: 80%;"/></td>
+                            <td style="width: 10%;"><input type="text" id="canFltUnit" maxlength="15" style="width: 80%;"/></td>
+                            <td style="width: 10%;">
+                                <input type="text" id="canFltClass" list="canFltClassOptions" maxlength="23" style="width: 80%;"/>
+                                <datalist id="canFltClassOptions">
+                                    <option value="distance"></option>
+                                    <option value="speed"></option>
+                                    <option value="temperature"></option>
+                                    <option value="voltage"></option>
+                                    <option value="current"></option>
+                                    <option value="power"></option>
+                                    <option value="energy"></option>
+                                    <option value="battery"></option>
+                                    <option value="pressure"></option>
+                                    <option value="volume"></option>
+                                    <option value="duration"></option>
+                                    <option value="frequency"></option>
+                                </datalist>
+                            </td>
+                            <td><input id="add_row_button" name="add_row_button" type="button" onclick="addCANFLTRow()"
+                                    value="Add ID" style="width: 100%;" /></td>
+                        </tr>
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -2209,7 +2233,7 @@ function loadAutoTable(jsonData) {
 
 	var canData = [];
 
-	function restoreCANFLTRow(id, n, p, pi, s, b, e, c) {
+	function restoreCANFLTRow(id, n, p, pi, s, b, e, c, u, cl) {
 		var canId = id;
 		if(canId < 0) {
 			canId = 0;
@@ -2223,6 +2247,8 @@ function loadAutoTable(jsonData) {
 		var bitLength = b;
 		var expression = e;
 		var cycle = c;
+		var unit = u || "";
+		var canClass = cl || "";
 		var table = document.getElementById("can_flt_table");
 		var row = table.insertRow(-1);
 		var cell1 = row.insertCell(0);
@@ -2234,6 +2260,8 @@ function loadAutoTable(jsonData) {
 		var cell7 = row.insertCell(6);
 		var cell8 = row.insertCell(7);
 		var cell9 = row.insertCell(8);
+		var cell10 = row.insertCell(9);
+		var cell11 = row.insertCell(10);
 		cell1.innerHTML = canId;
 		cell2.innerHTML = name;
 		cell3.innerHTML = pid;
@@ -2242,7 +2270,9 @@ function loadAutoTable(jsonData) {
 		cell6.innerHTML = bitLength;
 		cell7.innerHTML = expression;
 		cell8.innerHTML = cycle;
-		cell9.innerHTML = '<button style="width: 100%;" onclick="deleteCANFLTRow(this)">Delete</button>';
+		cell9.innerHTML = unit;
+		cell10.innerHTML = canClass;
+		cell11.innerHTML = '<button style="width: 100%;" onclick="deleteCANFLTRow(this)">Delete</button>';
 		canData.push({
 			CANID: canId,
 			Name: name,
@@ -2251,7 +2281,9 @@ function loadAutoTable(jsonData) {
 			StartBit: startBit,
 			BitLength: bitLength,
 			Expression: expression,
-			Cycle: cycle
+			Cycle: cycle,
+			Unit: unit,
+			Class: canClass
 		});
 		document.getElementById("canId").value = "";
 		document.getElementById("name").value = "";
@@ -2261,6 +2293,8 @@ function loadAutoTable(jsonData) {
 		document.getElementById("bitLength").value = "";
 		document.getElementById("expression").value = "";
 		document.getElementById("cycle").value = "";
+		document.getElementById("canFltUnit").value = "";
+		document.getElementById("canFltClass").value = "";
 	}
 
 	function openTab(evt, tabName) {
@@ -2550,7 +2584,7 @@ function loadAutoTable(jsonData) {
 			if(this.responseText != "NONE") {
 				if(Array.isArray(obj.can_flt)) {
 					obj.can_flt.forEach((item) => {
-						restoreCANFLTRow(item["CANID"], item["Name"], item["PID"], item["PIDIndex"], item["StartBit"], item["BitLength"], item["Expression"], item["Cycle"]);
+						restoreCANFLTRow(item["CANID"], item["Name"], item["PID"], item["PIDIndex"], item["StartBit"], item["BitLength"], item["Expression"], item["Cycle"], item["Unit"], item["Class"]);
 					});
 				}
 			}
@@ -3214,6 +3248,8 @@ function loadAutoTable(jsonData) {
 		var expression = document.getElementById("expression").value;
 		var pid = parseInt(document.getElementById("pid").value);
 		var pidi = parseInt(document.getElementById("pindex").value);
+		var unit = document.getElementById("canFltUnit").value;
+		var canClass = document.getElementById("canFltClass").value;
 		if(isNaN(canId) || canId == "" || canId < 0 || canId > 536870912) {
 			alert("CAN ID must be a valid number between 0 and 536870912");
 			return;
@@ -3242,6 +3278,14 @@ function loadAutoTable(jsonData) {
 			alert("PID must be a number between 0 and 7");
 			return;
 		}
+		if(unit.length > 15) {
+			alert("Unit must be 15 characters or less.");
+			return;
+		}
+		if(canClass.length > 23) {
+			alert("Class must be 23 characters or less.");
+			return;
+		}
 		if(isNameUnique(name)) {
 			var table = document.getElementById("can_flt_table");
 			var row = table.insertRow(-1);
@@ -3254,6 +3298,8 @@ function loadAutoTable(jsonData) {
 			var cell7 = row.insertCell(6);
 			var cell8 = row.insertCell(7);
 			var cell9 = row.insertCell(8);
+			var cell10 = row.insertCell(9);
+			var cell11 = row.insertCell(10);
 			if(table.rows.length - 1 >= 100) {
 				alert("Maximum row limit (100) reached.");
 				return;
@@ -3266,7 +3312,9 @@ function loadAutoTable(jsonData) {
 			cell6.innerHTML = bitLength;
 			cell7.innerHTML = expression;
 			cell8.innerHTML = cycle;
-			cell9.innerHTML = '<button style="width: 100%;" onclick="deleteCANFLTRow(this) ">Delete</button>';
+			cell9.innerHTML = unit;
+			cell10.innerHTML = canClass;
+			cell11.innerHTML = '<button style="width: 100%;" onclick="deleteCANFLTRow(this) ">Delete</button>';
 			canData.push({
 				CANID: canId,
 				Name: name,
@@ -3275,7 +3323,9 @@ function loadAutoTable(jsonData) {
 				StartBit: startBit,
 				BitLength: bitLength,
 				Expression: expression,
-				Cycle: cycle
+				Cycle: cycle,
+				Unit: unit,
+				Class: canClass
 			});
 			document.getElementById("canId").value = "";
 			document.getElementById("name").value = "";
@@ -3285,6 +3335,8 @@ function loadAutoTable(jsonData) {
 			document.getElementById("bitLength").value = "";
 			document.getElementById("expression").value = "";
 			document.getElementById("cycle").value = "";
+			document.getElementById("canFltUnit").value = "";
+			document.getElementById("canFltClass").value = "";
 		} else {
 			alert("Name must be unique.");
 		}
